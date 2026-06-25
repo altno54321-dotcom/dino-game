@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Eye-Dino PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#f7f7f7">
+    <style>
+        /* Base reset and Fullscreen flexbox */
+        body { margin: 0; padding: 0; background: #222; font-family: Arial, sans-serif; text-align: center; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; width: 100vw; touch-action: none; }
+        
+        .game-wrapper { position: relative; width: 100vw; height: 100vh; background: #f7f7f7; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+        
+        canvas { display: block; width: 100%; height: 100%; max-height: 100vh; max-width: 100vw; object-fit: contain; background: #fff; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+
+        /* Full overlay menus */
+        #disclaimer, #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(247, 247, 247, 0.98); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 30; overflow-y: auto; padding: 20px; box-sizing: border-box; }
+        
+        #ui { display: none; z-index: 20; } 
+        
+        .button-group { display: flex; justify-content: center; flex-wrap: wrap; gap: 15px; margin-top: 15px; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #535353; color: white; border: none; border-radius: 5px; font-weight: bold; transition: 0.2s; white-space: nowrap; }
+        button:hover { background: #333; transform: translateY(-2px); }
+        
+        /* HUD Buttons */
+        .hud-btn { position: absolute; z-index: 10; padding: 8px 15px; font-size: 14px; background: rgba(83, 83, 83, 0.8); color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .hud-btn:hover { background: #333; }
+        #btnMenu { top: 15px; left: 15px; display: none; }
+        #btnFullscreen { top: 15px; right: 15px; }
+        
+        .instructions { font-size: 14px; color: #555; margin-top: 20px; line-height: 1.6; max-width: 600px; background: #eee; padding: 15px; border-radius: 8px; }
+        h1 { margin: 0 0 10px 0; color: #333; font-size: 2.5rem;}
+        
+        /* The video container is fully hidden from UI but active for AI */
+        #video-container { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; z-index: -1; }
+        #webcam { width: 100%; height: auto; transform: scaleX(-1); }
+    </style>
+</head>
+<body>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <div class="game-wrapper">
+        <button id="btnMenu" class="hud-btn">🏠 Menu</button>
+        <button id="btnFullscreen" class="hud-btn">⛶ Fullscreen</button>
+        <canvas id="gameCanvas" width="800" height="250"></canvas>
+        
+        <!-- STARTUP PRIVACY DISCLAIMER -->
+        <div id="disclaimer">
+            <h1 style="color: #b22222;">⚠️ Camera Usage Disclaimer</h1>
+            <p style="max-width: 500px; margin: 15px auto; font-size: 16px; color: #444; line-height: 1.6;">
+                This game features an optional AI "Eye Tracking" mode that requires access to your webcam.<br><br>
+                All facial recognition is processed <b>100% locally</b> on your device. No video data is ever saved, recorded, sent, or uploaded anywhere.
+            </p>
+            <div class="button-group">
+                <button id="btnAgree" style="background: #228B22;">I'm OK with it</button>
+                <button id="btnLeave" style="background: #b22222;">Leave App</button>
+            </div>
+        </div>
+
+        <!-- MAIN MENU -->
+        <div id="ui">
+            <h1>🦖 Dino Runner</h1>
+            <p style="font-size: 1.1rem; color: #444;">Choose how you want to play!</p>
+            
+            <div class="button-group">
+                <button id="btnKeyboard">⌨️/📱 Play (Keyboard & Touch)</button>
+                <button id="btnEyes">👁️ Play with Face Tracking</button>
+            </div>
+            
+            <p id="status" style="color: red; font-weight: bold; margin-top: 15px;"></p>
+            
+            <div class="instructions">
+                <b>Keyboard:</b> Space or Up Arrow to Jump, Down Arrow to Duck.<br>
+                <b>Mobile/Touch:</b> Tap the <b>TOP HALF</b> of the screen to Jump, <b>BOTTOM HALF</b> to Duck.<br>
+                <b>Face Tracking:</b> <b>Blink</b> (both eyes) to Jump, <b>Wink</b> (hold one eye closed) to Duck.
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        
+        // --- UI & DISCLAIMER LOGIC ---
+        document.getElementById('btnAgree').addEventListener('click', () => {
+            document.getElementById('disclaimer').style.display = 'none';
+            document.getElementById('ui').style.display = 'flex';
+        });
+
+        document.getElementById('btnLeave').addEventListener('click', () => {
+            window.location.href = "https://www.google.com";
+        });
+
+        // --- FULLSCREEN LOGIC ---
+        const btnFullscreen = document.getElementById('btnFullscreen');
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => console.error(err));
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        // --- PWA SERVICE WORKER ---
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => console.error('SW failed', err));
+            });
+        }
+
+        // --- GAME LOGIC & GRAPHICS ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status');
+        const uiPanel = document.getElementById('ui');
+        const btnMenu = document.getElementById('btnMenu');
+        
+        let gameRunning = false;
+        let isGameOver = false;
+        let currentMode = ''; 
+        let score = 0;
+        let frameCount = 0;
+        let gameSpeed = 5;
+        let framesUntilNextSpawn = 50; 
+        
+        let highScore = localStorage.getItem('dinoHighScore') || 0;
+        let nextSpeedUpScore = 100;
+        let speedUpGap = 150;
+
+        const dino = { x: 50, y: 200, dy: 0, gravity: 0.6, jumpPower: -10.5, ducking: false };
+        let obstacles = [];
+
+        function jump() {
+            if (isGameOver) resetGame();
+            if (dino.y >= (dino.ducking ? 220 : 200)) { 
+                dino.dy = dino.jumpPower;
+                dino.ducking = false;
+            }
+        }
+
+        function duck(isDucking) {
+            if (isGameOver) return;
+            dino.ducking = isDucking;
+            if (isDucking && dino.y < 200) { dino.dy += 1.5; } 
+        }
+
+        // KEYBOARD CONTROLS
+        window.addEventListener('keydown', e => {
+            if (!gameRunning) return;
+            if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+            if (e.code === 'ArrowDown') { e.preventDefault(); duck(true); }
+        });
+        window.addEventListener('keyup', e => {
+            if (!gameRunning) return;
+            if (e.code === 'ArrowDown') duck(false);
+        });
+
+        // MOBILE TOUCH CONTROLS
+        window.addEventListener('touchstart', (e) => {
+            if (!gameRunning || e.target === btnMenu || e.target === btnFullscreen) return;
+            const touchY = e.touches[0].clientY;
+            if (touchY < window.innerHeight / 2) {
+                jump();
+            } else {
+                duck(true);
+            }
+        });
+        window.addEventListener('touchend', (e) => {
+            if (!gameRunning) return;
+            duck(false);
+        });
+
+        function spawnObstacle() {
+            const isBird = Math.random() < 0.3; 
+            if (isBird) {
+                // Y=185 places the bird exactly at the dinosaur's head height.
+                // Standing = Death. Ducking = Safe.
+                obstacles.push({ type: 'bird', x: canvas.width, y: 185, w: 38, h: 25, hitX: 5, hitY: 5, hitW: 28, hitH: 15 });
+            } else {
+                obstacles.push({ type: 'cactus', x: canvas.width, y: 200, w: 24, h: 45, hitX: 6, hitY: 8, hitW: 12, hitH: 37 });
+            }
+        }
+
+        function resetGame() {
+            obstacles = [];
+            score = 0;
+            frameCount = 0;
+            gameSpeed = 5;
+            isGameOver = false;
+            dino.y = 200;
+            dino.dy = 0;
+            framesUntilNextSpawn = 50; 
+            nextSpeedUpScore = 100;
+            speedUpGap = 150;
+        }
+
+        function setHighScore() {
+            let visualScore = Math.floor(score/10);
+            if (visualScore > highScore) {
+                highScore = visualScore;
+                localStorage.setItem('dinoHighScore', highScore);
+            }
+        }
+
+        function update() {
+            if (!gameRunning || isGameOver) return;
+
+            dino.dy += dino.gravity;
+            dino.y += dino.dy;
+
+            let groundLevel = dino.ducking ? 220 : 200;
+            let currentWidth = dino.ducking ? 65 : 45;
+            let currentHeight = dino.ducking ? 25 : 45;
+            
+            if (dino.y > groundLevel) {
+                dino.y = groundLevel;
+                dino.dy = 0;
+            }
+
+            framesUntilNextSpawn--;
+            if (framesUntilNextSpawn <= 0) {
+                spawnObstacle();
+                let gapInPixels = 350 + (Math.random() * 350); 
+                framesUntilNextSpawn = Math.floor(gapInPixels / gameSpeed);
+            }
+            
+            for (let i = 0; i < obstacles.length; i++) {
+                let obs = obstacles[i];
+                obs.x -= gameSpeed;
+
+                let hitLeft = obs.x + obs.hitX;
+                let hitTop = obs.y + obs.hitY;
+
+                if (dino.x < hitLeft + obs.hitW &&
+                    dino.x + currentWidth > hitLeft &&
+                    dino.y < hitTop + obs.hitH &&
+                    dino.y + currentHeight > hitTop) {
+                    
+                    isGameOver = true;
+                    setHighScore(); 
+                }
+            }
+
+            obstacles = obstacles.filter(obs => obs.x > -50);
+            
+            score++;
+            if (score === nextSpeedUpScore * 10) {
+                gameSpeed += 0.5; 
+                nextSpeedUpScore += speedUpGap; 
+                speedUpGap += 50; 
+            }
+
+            frameCount++;
+        }
+
+        function drawDino(x, y, ducking, frame) {
+            ctx.fillStyle = '#535353';
+            let runStep = (Math.floor(frame / 10) % 2 === 0);
+            let isAirborne = (y < (ducking ? 220 : 200));
+
+            if(ducking) {
+                ctx.fillRect(x + 15, y + 5, 35, 15); 
+                ctx.fillRect(x, y + 5, 15, 8); 
+                ctx.fillRect(x + 50, y + 5, 15, 10); 
+                ctx.fillStyle = '#fff'; ctx.fillRect(x + 55, y + 7, 3, 3); ctx.fillStyle = '#535353'; 
+                if (isAirborne || runStep) {
+                    ctx.fillRect(x + 20, y + 20, 6, 5); ctx.fillRect(x + 40, y + 20, 6, 5);
+                } else {
+                    ctx.fillRect(x + 23, y + 20, 6, 5); ctx.fillRect(x + 37, y + 20, 6, 5);
+                }
+            } else {
+                ctx.fillRect(x + 20, y, 20, 15); 
+                ctx.fillRect(x + 40, y, 5, 10); 
+                ctx.fillStyle = '#fff'; ctx.fillRect(x + 25, y + 3, 3, 3); ctx.fillStyle = '#535353'; 
+                ctx.fillRect(x + 10, y + 15, 25, 20); 
+                ctx.fillRect(x, y + 20, 10, 10); 
+                ctx.fillRect(x + 35, y + 18, 8, 4); 
+                if (isAirborne) {
+                    ctx.fillRect(x + 15, y + 35, 6, 10); ctx.fillRect(x + 25, y + 35, 6, 10);
+                } else if (runStep) {
+                    ctx.fillRect(x + 15, y + 35, 6, 5); ctx.fillRect(x + 25, y + 35, 6, 10);
+                } else {
+                    ctx.fillRect(x + 15, y + 35, 6, 10); ctx.fillRect(x + 25, y + 35, 6, 5); 
+                }
+            }
+        }
+
+        function drawCactus(x, y) {
+            ctx.fillStyle = '#228B22'; 
+            ctx.fillRect(x + 8, y, 8, 45); 
+            ctx.fillRect(x, y + 15, 8, 4); 
+            ctx.fillRect(x, y + 5, 4, 14); 
+            ctx.fillRect(x + 16, y + 25, 8, 4); 
+            ctx.fillRect(x + 20, y + 10, 4, 19); 
+        }
+
+        function drawBird(x, y, frame) {
+            ctx.fillStyle = '#535353';
+            let flapUp = (Math.floor(frame / 15) % 2 === 0); 
+            
+            ctx.fillRect(x + 10, y + 10, 15, 6); 
+            ctx.fillRect(x + 25, y + 8, 8, 6); 
+            ctx.fillRect(x + 33, y + 10, 5, 2); 
+            ctx.fillStyle = '#fff'; ctx.fillRect(x + 28, y + 10, 2, 2); ctx.fillStyle = '#535353'; 
+            
+            if (flapUp) {
+                ctx.fillRect(x + 12, y + 2, 8, 8); 
+                ctx.fillRect(x + 8, y, 4, 6);
+            } else {
+                ctx.fillRect(x + 12, y + 16, 8, 8); 
+                ctx.fillRect(x + 8, y + 20, 4, 6);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#535353';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, 245); 
+            ctx.lineTo(canvas.width, 245);
+            ctx.stroke();
+
+            if (isGameOver) {
+                ctx.fillStyle = "black";
+                ctx.font = "30px Arial";
+                ctx.fillText("GAME OVER", canvas.width / 2 - 90, canvas.height / 2 - 20);
+                ctx.font = "15px Arial";
+                ctx.fillText("Tap, Jump, or Blink to Restart", canvas.width / 2 - 100, canvas.height / 2 + 10);
+            }
+
+            drawDino(dino.x, dino.y, dino.ducking, frameCount);
+            obstacles.forEach(obs => { 
+                if (obs.type === 'bird') drawBird(obs.x, obs.y, frameCount);
+                if (obs.type === 'cactus') drawCactus(obs.x, obs.y);
+            });
+
+            ctx.fillStyle = '#535353';
+            ctx.font = "20px Arial";
+            ctx.textAlign = "right";
+            
+            let currentScoreStr = Math.floor(score/10).toString().padStart(5, '0');
+            let highScoreStr = highScore.toString().padStart(5, '0');
+            
+            ctx.fillText(`HI: ${highScoreStr}   ${currentScoreStr}`, canvas.width - 20, 30);
+            ctx.textAlign = "left"; 
+        }
+
+        function gameLoop() {
+            if (!gameRunning) return; 
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            uiPanel.style.display = 'none'; 
+            btnMenu.style.display = 'block';
+            resetGame();
+            gameRunning = true;
+            gameLoop();
+        }
+
+        btnMenu.addEventListener('click', () => {
+            gameRunning = false; 
+            setHighScore();      
+            uiPanel.style.display = 'flex'; 
+            btnMenu.style.display = 'none'; 
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+        });
+
+        document.getElementById('btnKeyboard').addEventListener('click', () => {
+            currentMode = 'keyboard'; 
+            startGame();
+        });
+
+        // --- AI FACE TRACKING LOGIC (Dynamically Loaded) ---
+
+        let faceLandmarker;
+        let webcamRunning = false;
+        const video = document.getElementById("webcam");
+        let lastVideoTime = -1;
+        let wasBlinking = false;
+
+        async function predictWebcam() {
+            if (video.currentTime !== lastVideoTime && gameRunning && currentMode === 'eyes') {
+                lastVideoTime = video.currentTime;
+                
+                const results = faceLandmarker.detectForVideo(video, performance.now());
+                
+                if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+                    const blendshapes = results.faceBlendshapes[0].categories;
+                    let left = 0; let right = 0;
+                    
+                    for (let shape of blendshapes) {
+                        if (shape.categoryName === "eyeBlinkLeft") left = shape.score;
+                        if (shape.categoryName === "eyeBlinkRight") right = shape.score;
+                    }
+
+                    let isWink = false;
+                    let isBlink = false;
+
+                    let maxEye = Math.max(left, right);
+                    let minEye = Math.min(left, right);
+
+                    // --- IMPROVED WINK/BLINK MATH ---
+                    // If both eyes are firmly closed, it's a blink.
+                    if (left > 0.42 && right > 0.42) {
+                        isBlink = true;
+                    } 
+                    // If one eye is closed but there's a big gap between the two eyes, it's a wink!
+                    // This accounts for "sympathetic squinting" where your open eye squints slightly when you wink.
+                    else if (maxEye > 0.45 && (maxEye - minEye) > 0.18) {
+                        isWink = true;
+                    }
+
+                    if (isBlink) {
+                        if (!wasBlinking) { jump(); wasBlinking = true; }
+                        duck(false);
+                    } else if (isWink) {
+                        duck(true); 
+                        wasBlinking = false; 
+                    } else {
+                        duck(false); 
+                        wasBlinking = false;
+                    }
+                }
+            }
+            if (webcamRunning) window.requestAnimationFrame(predictWebcam);
+        }
+
+        document.getElementById('btnEyes').addEventListener('click', async () => {
+            currentMode = 'eyes'; 
+
+            if (webcamRunning) {
+                startGame();
+                return;
+            }
+
+            statusText.innerText = "Downloading AI Model & Opening Camera...";
+            document.querySelector('.button-group').style.display = 'none'; 
+
+            try {
+                const { FaceLandmarker, FilesetResolver } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3");
+
+                const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+                faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                        delegate: "GPU"
+                    },
+                    outputFaceBlendshapes: true,
+                    runningMode: "VIDEO",
+                    numFaces: 1
+                });
+
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                
+                video.addEventListener("loadeddata", () => {
+                    document.querySelector('.button-group').style.display = 'flex'; 
+                    statusText.innerText = "";
+                    webcamRunning = true;
+                    predictWebcam(); 
+                    startGame();      
+                });
+            } catch (error) {
+                statusText.innerText = "Camera Error: " + error.message;
+                document.querySelector('.button-group').style.display = 'flex'; 
+            }
+        });
+    </script>
+</body>
+</html>
