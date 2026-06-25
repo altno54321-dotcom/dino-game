@@ -1,0 +1,17 @@
+{
+  "name": "Eye-Dino Runner",
+  "short_name": "Eye-Dino",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7f7f7",
+  "theme_color": "#535353",
+  "description": "An offline Dino game controlled by your eyes or keyboard.",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
